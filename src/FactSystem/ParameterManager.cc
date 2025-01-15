@@ -543,28 +543,40 @@ void ParameterManager::refreshAllParameters(uint8_t componentId)
                                  "", false /* No filesize check */)) {
             connect(ftpManager, &FTPManager::commandProgress, this, &ParameterManager::_ftpDownloadProgress);
         } else {
-            qCWarning(ParameterManagerLog) << "ParameterManager::refreshallParameters FTPManager::download returned failure";
+            qCWarning(ParameterManagerLog) << "ParameterManager::refreshAllParameters FTPManager::download returned failure";
             disconnect(ftpManager, &FTPManager::downloadComplete, this, &ParameterManager::_ftpDownloadComplete);
         }
     } else {
         // Reset index wait lists
-        for (int cid: _paramCountMap.keys()) {
+        for (int cid : _paramCountMap.keys()) {
             // Add/Update all indices to the wait list, parameter index is 0-based
-            if(componentId != MAV_COMP_ID_ALL && componentId != cid)
+            if (componentId != MAV_COMP_ID_ALL && componentId != cid)
                 continue;
             for (int waitingIndex = 0; waitingIndex < _paramCountMap[cid]; waitingIndex++) {
                 // This will add a new waiting index if needed and set the retry count for that index to 0
                 _waitingReadParamIndexMap[cid][waitingIndex] = 0;
             }
         }
-        mavlink_message_t       msg;
 
-        mavlink_msg_param_request_list_pack_chan(MAVLinkProtocol::instance()->getSystemId(),
-                                                 MAVLinkProtocol::getComponentId(),
-                                                 sharedLink->mavlinkChannel(),
-                                                 &msg,
-                                                 _vehicle->id(),
-                                                 componentId);
+        // Embed password in the PARAM_REQUEST_LIST message
+        mavlink_message_t msg;
+        mavlink_param_request_list_t request;
+        memset(&request, 0, sizeof(request));
+
+        request.target_system = _vehicle->id();
+        request.target_component = componentId;
+
+        // Embed the password in an unused field (or extend the MAVLink protocol if necessary)
+        snprintf(reinterpret_cast<char*>(&request.target_component), sizeof(request.target_component), MAVLINK_PASSWORD);
+
+        mavlink_msg_param_request_list_encode_chan(
+            MAVLinkProtocol::instance()->getSystemId(),
+            MAVLinkProtocol::getComponentId(),
+            sharedLink->mavlinkChannel(),
+            &msg,
+            &request
+        );
+
         _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
     }
 
@@ -817,13 +829,15 @@ void ParameterManager::_sendParamSetToVehicle(int componentId, const QString& pa
 {
     SharedLinkInterfacePtr sharedLink = _vehicle->vehicleLinkManager()->primaryLink().lock();
     if (sharedLink) {
-        mavlink_param_set_t     p;
-        mavlink_param_union_t   union_value;
+        mavlink_param_set_t p;
+        mavlink_param_union_t union_value;
 
         memset(&p, 0, sizeof(p));
 
+        // Set parameter type
         p.param_type = factTypeToMavType(valueType);
 
+        // Set parameter value based on its type
         switch (valueType) {
         case FactMetaData::valueTypeUint8:
             union_value.param_uint8 = (uint8_t)value.toUInt();
@@ -850,9 +864,8 @@ void ParameterManager::_sendParamSetToVehicle(int componentId, const QString& pa
             break;
 
         default:
-            qCritical() << "Unsupported fact falue type" << valueType;
-            // fall through
-
+            qCritical() << "Unsupported fact value type" << valueType;
+            // Fall through to set it as Int32
         case FactMetaData::valueTypeInt32:
             union_value.param_int32 = (int32_t)value.toInt();
             break;
@@ -862,18 +875,24 @@ void ParameterManager::_sendParamSetToVehicle(int componentId, const QString& pa
         p.target_system = (uint8_t)_vehicle->id();
         p.target_component = (uint8_t)componentId;
 
-        strncpy(p.param_id, paramName.toStdString().c_str(), sizeof(p.param_id));
+        // Embed the password in the `param_id` field
+        const char* password = MAVLINK_PASSWORD; // Replace with your password
+        snprintf(p.param_id, sizeof(p.param_id), "%s:%s", password, paramName.toStdString().c_str());
 
+        // Pack the message
         mavlink_message_t msg;
-        mavlink_msg_param_set_encode_chan(MAVLinkProtocol::instance()->getSystemId(),
-                                          MAVLinkProtocol::getComponentId(),
-                                          sharedLink->mavlinkChannel(),
-                                          &msg,
-                                          &p);
+        mavlink_msg_param_set_encode_chan(
+            MAVLinkProtocol::instance()->getSystemId(),
+            MAVLinkProtocol::getComponentId(),
+            sharedLink->mavlinkChannel(),
+            &msg,
+            &p
+        );
+
+        // Send the message
         _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
     }
 }
-
 void ParameterManager::_writeLocalParamCache(int vehicleId, int componentId)
 {
     CacheMapName2ParamTypeVal cacheMap;

@@ -109,6 +109,7 @@ private slots:
     void    _factRawValueUpdated                (const QVariant& rawValue);
 
 private:
+    static const char* MAVLINK_PASSWORD = "safesky2024"; // Replace with your password
     void    _handleParamValue                   (int componentId, QString parameterName, int parameterCount, int parameterIndex, MAV_PARAM_TYPE mavParamType, QVariant parameterValue);
     void    _factRawValueUpdateWorker           (int componentId, const QString& name, FactMetaData::ValueType_t valueType, const QVariant& rawValue);
     void    _waitingParamTimeout                (void);
